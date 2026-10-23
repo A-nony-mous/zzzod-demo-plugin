@@ -3,7 +3,7 @@ from one_dragon_qt.services.app_setting.app_setting_provider import (
     SettingType,
 )
 
-from .sample_plugin_const import APP_ID
+from .demo_plugin_const import APP_ID
 
 
 class SamplePluginAppSetting(AppSettingProvider):
@@ -14,6 +14,6 @@ class SamplePluginAppSetting(AppSettingProvider):
 
     @staticmethod
     def get_setting_cls() -> type:
-        from .sample_plugin_setting_interface import SamplePluginSettingInterface
+        from .demo_plugin_setting_interface import SamplePluginSettingInterface
 
         return SamplePluginSettingInterface

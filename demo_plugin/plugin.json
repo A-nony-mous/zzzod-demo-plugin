@@ -1,0 +1,21 @@
+{
+  "id": "demo_plugin",
+  "name": "演示插件",
+  "summary": "用于验证插件仓库收录与发版流程的演示插件。",
+  "version": "0.1.0",
+  "versionCode": 1,
+  "defaultGroup": false,
+  "needNotify": false,
+  "author": {
+    "name": "A-nony-mous",
+    "url": "https://github.com/A-nony-mous"
+  },
+  "homepage": "https://github.com/A-nony-mous/zzzod-demo-plugin",
+  "risk": [],
+  "compatibility": {
+    "minAppVersion": "0.0.0",
+    "minCoreApiVersion": 1,
+    "python": ">=3.11"
+  },
+  "apps": []
+}
