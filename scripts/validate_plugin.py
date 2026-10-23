@@ -221,21 +221,27 @@ def validate_package(
     return manifest, cover
 
 
-def validate_repo_root(reporter: Reporter, repo: Path, strict: bool) -> Path | None:
+def validate_repo_root(reporter: Reporter, repo: Path, strict: bool) -> tuple[Path | None, dict[str, Any] | None]:
     candidates = find_package_dirs(repo)
     if len(candidates) != 1:
         names = ", ".join(path.name for path in candidates) or "none"
         reporter.fail("PACKAGE_COUNT", f"expected one subdirectory with plugin.json, found: {names}")
-        return None
+        return None, None
+
+    # 旧模板会在根目录留一份同步的 plugin.json：与包内一致时容忍（提示删除），不一致才失败
+    root_manifest: dict[str, Any] | None = None
     if (repo / "plugin.json").exists():
-        reporter.fail("ROOT_MANIFEST", "plugin.json at repo root is not allowed; keep it in the package dir")
+        try:
+            root_manifest = load_json(repo / "plugin.json")
+        except (ValueError, UnicodeDecodeError) as exc:
+            reporter.fail("ROOT_MANIFEST", f"repo root plugin.json is not valid JSON: {exc}")
 
     for prefix, code in (("README", "README_MISSING"), ("LICENSE", "LICENSE_MISSING")):
         if any(child.is_file() and child.name.upper().startswith(prefix) for child in repo.iterdir()):
             reporter.pass_("file", prefix)
         elif strict:
             reporter.fail(code, prefix)
-    return candidates[0]
+    return candidates[0], root_manifest
 
 
 def safe_extract(reporter: Reporter, zip_path: Path, target: Path, max_zip_bytes: int) -> Path | None:
@@ -308,18 +314,27 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory() as temp:
         package_dir: Path | None
+        root_manifest: dict[str, Any] | None = None
         if args.zip:
             package_dir = safe_extract(reporter, Path(args.zip), Path(temp), args.max_zip_bytes)
         elif args.package_dir:
             package_dir = Path(args.package_dir).resolve()
         else:
-            package_dir = validate_repo_root(reporter, Path(args.repo or ".").resolve(), args.strict)
+            package_dir, root_manifest = validate_repo_root(reporter, Path(args.repo or ".").resolve(), args.strict)
 
         if package_dir is not None:
             manifest, cover = validate_package(
                 reporter, package_dir, args.expect_id, args.expect_tag, args.max_cover_bytes
             )
             has_app_setting = (package_dir / f"{plugin_id(manifest)}_app_setting.py").is_file()
+            if root_manifest is not None and manifest:
+                if root_manifest == manifest:
+                    reporter.pass_("root manifest", "matches package plugin.json (legacy copy, safe to delete)")
+                else:
+                    reporter.fail(
+                        "ROOT_MANIFEST_MISMATCH",
+                        "repo root plugin.json differs from the package plugin.json; delete the root copy",
+                    )
             if cover is not None and args.cover_out and not reporter.failed:
                 destination = Path(args.cover_out + cover.suffix.lower())
                 destination.parent.mkdir(parents=True, exist_ok=True)
