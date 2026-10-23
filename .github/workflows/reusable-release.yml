@@ -1,0 +1,74 @@
+name: Reusable Plugin Release
+
+on:
+  workflow_call:
+    inputs:
+      python-version:
+        type: string
+        default: "3.11"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Require a tag push
+        if: github.ref_type != 'tag'
+        run: |
+          echo "::error::Release must be triggered by pushing a v<version> tag."
+          exit 1
+
+      - name: Checkout plugin repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Checkout template tools at the exact workflow commit
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .plugin-template
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      - name: Validate repository
+        run: |
+          python .plugin-template/scripts/generate_const.py --repo . --check
+          python .plugin-template/scripts/validate_plugin.py --repo . --strict --expect-tag "$GITHUB_REF_NAME"
+
+      - name: Build release asset
+        id: build
+        run: python .plugin-template/scripts/build_zip.py --repo . --out "$RUNNER_TEMP/dist"
+
+      - name: Validate release asset
+        run: >
+          python .plugin-template/scripts/validate_plugin.py
+          --zip "${{ steps.build.outputs.zip }}"
+          --expect-id "${{ steps.build.outputs.id }}"
+          --expect-tag "$GITHUB_REF_NAME"
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ZIP: ${{ steps.build.outputs.zip }}
+          VERSION: ${{ steps.build.outputs.version }}
+          SHA256: ${{ steps.build.outputs.sha256 }}
+        run: |
+          prerelease=""
+          if [[ "$VERSION" == *-* ]]; then prerelease="--prerelease"; fi
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "$ZIP" --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$GITHUB_REF_NAME" "$ZIP" --repo "$GITHUB_REPOSITORY" \
+              --verify-tag --title "$GITHUB_REF_NAME" --generate-notes $prerelease
+          fi
+          echo "### Released \`$(basename "$ZIP")\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "sha256: \`$SHA256\`" >> "$GITHUB_STEP_SUMMARY"

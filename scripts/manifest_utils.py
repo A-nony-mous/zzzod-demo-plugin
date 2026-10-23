@@ -16,10 +16,24 @@ RISK_TAGS: set[str] = {
     "clipboard",
     "process",
 }
-
-
-def project_root() -> Path:
-    return Path(__file__).resolve().parents[1]
+COVER_EXTENSIONS: set[str] = {".png", ".jpg", ".jpeg", ".webp"}
+DEFAULT_MAX_COVER_BYTES = 512 * 1024
+DEFAULT_MAX_ZIP_BYTES = 50 * 1024 * 1024
+DEPENDENCY_FILES: set[str] = {
+    "requirements.txt",
+    "pyproject.toml",
+    "setup.py",
+    "setup.cfg",
+    "pipfile",
+    "pipfile.lock",
+    "poetry.lock",
+    "uv.lock",
+    "pdm.lock",
+    "environment.yml",
+    "environment.yaml",
+}
+EXCLUDED_NAMES: set[str] = {"__pycache__", ".DS_Store", "Thumbs.db"}
+EXCLUDED_SUFFIXES: set[str] = {".pyc", ".pyo"}
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -30,35 +44,49 @@ def load_json(path: Path) -> dict[str, Any]:
     return data
 
 
-def dump_json(data: dict[str, Any]) -> str:
-    return json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+def find_package_dirs(repo: Path) -> list[Path]:
+    return sorted(
+        child
+        for child in repo.iterdir()
+        if child.is_dir()
+        and not child.name.startswith(".")
+        and (child / "plugin.json").is_file()
+    )
 
 
-def read_manifest(manifest_path: Path | None = None) -> dict[str, Any]:
-    path = manifest_path or project_root() / "plugin.json"
-    return load_json(path)
+def find_package_dir(repo: Path) -> Path:
+    candidates = find_package_dirs(repo)
+    if len(candidates) != 1:
+        names = ", ".join(path.name for path in candidates) or "none"
+        raise ValueError(
+            f"expected exactly one subdirectory with plugin.json in {repo}, found: {names}"
+        )
+    return candidates[0]
 
 
 def plugin_id(manifest: dict[str, Any]) -> str:
     value = manifest.get("id")
-    if not isinstance(value, str):
-        return ""
-    return value
+    return value if isinstance(value, str) else ""
 
 
-def plugin_package_dir(manifest: dict[str, Any]) -> Path:
-    return project_root() / plugin_id(manifest)
+def is_dependency_file(name: str) -> bool:
+    lower = name.lower()
+    return lower in DEPENDENCY_FILES or (
+        lower.startswith("requirements") and lower.endswith(".txt")
+    )
 
 
-def package_manifest_path(manifest: dict[str, Any]) -> Path:
-    return plugin_package_dir(manifest) / "plugin.json"
+def is_excluded(path: Path) -> bool:
+    return any(part in EXCLUDED_NAMES for part in path.parts) or (
+        path.suffix in EXCLUDED_SUFFIXES
+    )
 
 
-def const_path_for_app(manifest: dict[str, Any], app: dict[str, Any] | None = None) -> Path:
-    package_dir = plugin_package_dir(manifest)
+def const_path_for_app(
+    package_dir: Path, manifest: dict[str, Any], app: dict[str, Any] | None = None
+) -> Path:
     if app is None:
-        app_id = plugin_id(manifest)
-        return package_dir / f"{app_id}_const.py"
+        return package_dir / f"{plugin_id(manifest)}_const.py"
 
     app_id = str(app.get("id", ""))
     feature = app_id.removeprefix(f"{plugin_id(manifest)}_")
@@ -75,30 +103,20 @@ def py_bool(value: Any) -> str:
 
 def render_const(manifest: dict[str, Any], app: dict[str, Any] | None = None) -> str:
     author = manifest.get("author") if isinstance(manifest.get("author"), dict) else {}
-    if app is None:
-        app_id = plugin_id(manifest)
-        name = manifest.get("name", "")
-        summary = manifest.get("summary", "")
-        default_group = manifest.get("defaultGroup", False)
-        need_notify = manifest.get("needNotify", False)
-    else:
-        app_id = app.get("id", "")
-        name = app.get("name", "")
-        summary = app.get("summary", "")
-        default_group = app.get("defaultGroup", False)
-        need_notify = app.get("needNotify", False)
+    source = manifest if app is None else app
+    app_id = plugin_id(manifest) if app is None else app.get("id", "")
 
     return (
         "# Generated from plugin.json. Run scripts/generate_const.py after editing manifest.\n"
         f"APP_ID = {py_string(app_id)}\n"
-        f"APP_NAME = {py_string(name)}\n"
-        f"DEFAULT_GROUP = {py_bool(default_group)}\n"
-        f"NEED_NOTIFY = {py_bool(need_notify)}\n"
+        f"APP_NAME = {py_string(source.get('name', ''))}\n"
+        f"DEFAULT_GROUP = {py_bool(source.get('defaultGroup', False))}\n"
+        f"NEED_NOTIFY = {py_bool(source.get('needNotify', False))}\n"
         "\n"
         f"PLUGIN_AUTHOR = {py_string(author.get('name', ''))}\n"
         f"PLUGIN_HOMEPAGE = {py_string(manifest.get('homepage', ''))}\n"
         f"PLUGIN_VERSION = {py_string(manifest.get('version', ''))}\n"
-        f"PLUGIN_DESCRIPTION = {py_string(summary)}\n"
+        f"PLUGIN_DESCRIPTION = {py_string(source.get('summary', ''))}\n"
     )
 
 
